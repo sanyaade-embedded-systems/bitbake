@@ -985,6 +985,7 @@ class CookerParser(object):
             self.shutdown(clean=False)
             sys.exit(1)
 
+
         self.current += 1
         self.virtuals += len(result)
         if parsed:
