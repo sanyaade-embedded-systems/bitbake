@@ -214,10 +214,9 @@ def main(server, eventHandler):
     while True:
         try:
             try:
-                event = None
                 event = eventHandler.get(False, 0.25)
             except Queue.Empty:
-                pass
+                event = None
 
             if gtkthread.quit.isSet():
                 break

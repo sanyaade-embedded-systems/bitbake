@@ -30,10 +30,9 @@ def event_handle_idle_func (eventHandler, build, pbar):
 
     # Consume as many messages as we can in the time available to us
     try:
-        event = eventHandler.get(False)
-        while event:
-            build.handle_event (event, pbar)
+        while 1:
             event = eventHandler.get(False)
+            build.handle_event (event, pbar)
     except Queue.Empty:
         pass
     
