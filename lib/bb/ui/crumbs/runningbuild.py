@@ -20,6 +20,7 @@
 
 import gtk
 import gobject
+import logging
 
 class RunningBuildModel (gtk.TreeStore):
     (COL_TYPE, COL_PACKAGE, COL_TASK, COL_MESSAGE, COL_ICON, COL_ACTIVE) = (0, 1, 2, 3, 4, 5)
@@ -63,33 +64,33 @@ class RunningBuild (gobject.GObject):
         # for the message.
         if hasattr(event, 'pid'):
             pid = event.pid
+        if hasattr(event, 'process'):
+            pid = event.process
+        if pid:
             if pid in self.pids_to_task:
                 (package, task) = self.pids_to_task[pid]
                 parent = self.tasks_to_iter[(package, task)]
 
-        if isinstance(event, bb.msg.MsgBase):
-            # Ignore the "Running task i of n .."
-            if (event._message.startswith ("Running task")):
+        if(isinstance(event, logging.LogRecord)):
+            if (event.msg.startswith ("Running task")):
                 return # don't add these to the list
 
-            # Set a pretty icon for the message based on it's type.
-            if isinstance(event, bb.msg.MsgWarn):
+            if event.levelno >= logging.WARNING:
                 icon = "dialog-warning"
-            elif isinstance(event, bb.msg.MsgError):
+            elif event.levelno >= logging.ERROR:
                 icon = "dialog-error"
             else:
                 icon = None
 
-            # Add the message to the tree either at the top level if parent is
-            # None otherwise as a descendent of a task.
-            self.model.append (parent,
-                               (event.__class__.__name__.split()[-1], # e.g. MsgWarn, MsgError
-                                package,
-                                task,
-                                event._message,
-                                icon,
-                                False))
-        elif isinstance(event, bb.build.TaskStarted):
+            self.model.append(parent,
+                              (None,
+                               package,
+                               task,
+                               event.msg % event.args,
+                               icon,
+                               False))
+
+        if isinstance(event, bb.build.TaskStarted):
             (package, task) = (event._package, event._task)
 
             # Save out this PID.
@@ -162,13 +163,16 @@ class RunningBuild (gobject.GObject):
             else:
                 self.emit ("build-succeeded")
 
+        elif isinstance(event, bb.event.ParseStarted) and pbar:
+            self.progress_total = event.total
+            pbar.update(0, self.progress_total)
         elif isinstance(event, bb.event.ParseProgress) and pbar:
-            x = event.sofar
-            y = event.total
-            if x == y:
-                pbar.hide()
-                return
-            pbar.update(x, y)
+            x = event.current
+            pbar.update(x, self.progress_total)
+        elif isinstance(event, bb.event.ParseCompleted) and pbar:
+            pbar.hide()
+            return
+
 
 class RunningBuildTreeView (gtk.TreeView):
     def __init__ (self):

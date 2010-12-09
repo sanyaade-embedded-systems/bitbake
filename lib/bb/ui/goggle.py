@@ -24,14 +24,19 @@ import xmlrpclib
 from bb.ui.crumbs.runningbuild import RunningBuildTreeView, RunningBuild
 from bb.ui.crumbs.progress import ProgressBar
 
+import Queue
+
 def event_handle_idle_func (eventHandler, build, pbar):
 
     # Consume as many messages as we can in the time available to us
-    event = eventHandler.getEvent()
-    while event:
-        build.handle_event (event, pbar)
-        event = eventHandler.getEvent()
-
+    try:
+        event = eventHandler.get(False)
+        while event:
+            build.handle_event (event, pbar)
+            event = eventHandler.get(False)
+    except Queue.Empty:
+        pass
+    
     return True
 
 def scroll_tv_cb (model, path, iter, view):
@@ -76,7 +81,7 @@ def main (server, eventHandler):
 
     # Use a timeout function for probing the event queue to find out if we
     # have a message waiting for us.
-    gobject.timeout_add (200,
+    gobject.timeout_add (100,
                          event_handle_idle_func,
                          eventHandler,
                          running_build,

@@ -25,6 +25,7 @@ import threading
 import urllib2
 import os
 import contextlib
+import Queue
 
 from bb.ui.crumbs.buildmanager import BuildManager, BuildConfiguration
 from bb.ui.crumbs.buildmanager import BuildManagerTreeView
@@ -312,10 +313,13 @@ class BuildSetupDialog (gtk.Dialog):
 # TODO: Should be a method on the RunningBuild class
 def event_handle_timeout (eventHandler, build):
     # Consume as many messages as we can ...
-    event = eventHandler.getEvent()
-    while event:
-        build.handle_event (event)
-        event = eventHandler.getEvent()
+    try:
+        event = eventHandler.get(False)
+        while event:
+            build.handle_event (event)
+            event = eventHandler.get(False)
+    except Queue.Empty:
+        pass
     return True
 
 class MainWindow (gtk.Window):
@@ -417,7 +421,7 @@ def main (server, eventHandler):
 
     # Use a timeout function for probing the event queue to find out if we
     # have a message waiting for us.
-    gobject.timeout_add (200,
+    gobject.timeout_add (100,
                          event_handle_timeout,
                          eventHandler,
                          running_build)
