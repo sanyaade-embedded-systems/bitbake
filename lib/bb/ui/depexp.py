@@ -19,6 +19,7 @@
 
 import gobject
 import gtk
+import Queue
 import threading
 import xmlrpclib
 from bb.ui.crumbs.progress import ProgressBar
@@ -154,7 +155,6 @@ class DepExplorer(gtk.Window):
 
 
 def parse(depgraph, pkg_model, depends_model):
-
     for package in depgraph["pn"]:
         pkg_model.set(pkg_model.append(), COL_PKG_NAME, package)
 
@@ -210,25 +210,38 @@ def main(server, eventHandler):
     pbar = ProgressBar(dep)
     gtk.gdk.threads_leave()
 
+    progress_total = 0
     while True:
         try:
-            event = eventHandler.waitEvent(0.25)
+            try:
+                event = None
+                event = eventHandler.get(False, 0.25)
+            except Queue.Empty:
+                pass
+
             if gtkthread.quit.isSet():
                 break
 
             if event is None:
                 continue
-            if isinstance(event, bb.event.ParseProgress):
-                x = event.sofar
-                y = event.total
-                if x == y:
-                    print(("\nParsing finished. %d cached, %d parsed, %d skipped, %d masked, %d errors."
-                        % ( event.cached, event.parsed, event.skipped, event.masked, event.errors)))
-                    pbar.hide()
-                    return
+
+            if isinstance(event, bb.event.ParseStarted):
+                progress_total = event.total
                 gtk.gdk.threads_enter()
-                pbar.update(x, y)
+                pbar.update(0, progress_total)
                 gtk.gdk.threads_leave()
+
+            if isinstance(event, bb.event.ParseProgress):
+                x = event.current
+                gtk.gdk.threads_enter()
+                pbar.update(x, progress_total)
+                gtk.gdk.threads_leave()
+                continue
+
+            if isinstance(event, bb.event.ParseCompleted):
+                print(("Parsing of %d .bb files complete (%d cached, %d parsed). %d targets, %d skipped, %d masked, %d errors."
+                    % ( event.total, event.cached, event.parsed, event.virtuals, event.skipped, event.masked, event.errors)))
+                pbar.hide()
                 continue
 
             if isinstance(event, bb.event.DepTreeGenerated):
