@@ -167,7 +167,6 @@ class Cache(object):
         old_mtimes.append(newest_mtime)
         newest_mtime = max(old_mtimes)
 
-        num_cached = 0
         if bb.parse.cached_mtime_noerror(self.cachefile) >= newest_mtime:
             self.load_cachefile()
         elif os.path.isfile(self.cachefile):
