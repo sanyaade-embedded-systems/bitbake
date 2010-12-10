@@ -75,10 +75,10 @@ class RunningBuild (gobject.GObject):
             if (event.msg.startswith ("Running task")):
                 return # don't add these to the list
 
-            if event.levelno >= logging.WARNING:
-                icon = "dialog-warning"
-            elif event.levelno >= logging.ERROR:
+            if event.levelno >= logging.ERROR:
                 icon = "dialog-error"
+            elif event.levelno >= logging.WARNING:
+                icon = "dialog-warning"
             else:
                 icon = None
 
