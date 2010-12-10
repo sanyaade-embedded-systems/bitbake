@@ -68,7 +68,7 @@ class RunningBuild (gobject.GObject):
         if hasattr(event, 'process'):
             pid = event.process
 
-        if pid in self.pids_to_task:
+        if pid and pid in self.pids_to_task:
             (package, task) = self.pids_to_task[pid]
             parent = self.tasks_to_iter[(package, task)]
 
@@ -90,7 +90,14 @@ class RunningBuild (gobject.GObject):
                 message = event.msg % event.args
             else:
                 message = event.msg
-            self.model.append(parent,
+
+            # if we know which package we belong to, we'll append onto its list.
+            # otherwise, we'll jump to the top of the master list
+            if parent:
+                tree_add = self.model.append
+            else:
+                tree_add = self.model.prepend
+            tree_add(parent,
                               (None,
                                package,
                                task,
@@ -111,7 +118,7 @@ class RunningBuild (gobject.GObject):
             if ((package, None) in self.tasks_to_iter):
                 parent = self.tasks_to_iter[(package, None)]
             else:
-                parent = self.model.append (None, (None,
+                parent = self.model.prepend(None, (None,
                                                    package,
                                                    None,
                                                    "Package: %s" % (package),
