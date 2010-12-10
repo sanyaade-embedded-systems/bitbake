@@ -163,15 +163,25 @@ class RunningBuild (gobject.GObject):
             else:
                 self.emit ("build-succeeded")
 
+        elif isinstance(event, bb.event.CacheLoadStarted) and pbar:
+            pbar.set_title("Loading cache")
+            self.progress_total = event.total
+            pbar.update(0, self.progress_total)
+        elif isinstance(event, bb.event.CacheLoadProgress) and pbar:
+            pbar.update(event.current, self.progress_total)
+        elif isinstance(event, bb.event.CacheLoadCompleted) and pbar:
+            pbar.update(self.progress_total, self.progress_total)
+
         elif isinstance(event, bb.event.ParseStarted) and pbar:
+            pbar.set_title("Processing recipes")
             self.progress_total = event.total
             pbar.update(0, self.progress_total)
         elif isinstance(event, bb.event.ParseProgress) and pbar:
-            x = event.current
-            pbar.update(x, self.progress_total)
+            pbar.update(event.current, self.progress_total)
         elif isinstance(event, bb.event.ParseCompleted) and pbar:
             pbar.hide()
-            return
+
+        return
 
 
 class RunningBuildTreeView (gtk.TreeView):
