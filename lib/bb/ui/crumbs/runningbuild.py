@@ -76,7 +76,6 @@ class RunningBuild (gobject.GObject):
             if (event.msg.startswith ("Running task")):
                 return # don't add these to the list
 
-
             if event.levelno >= logging.ERROR:
                 icon = "dialog-error"
                 color = "#ffaaaa"

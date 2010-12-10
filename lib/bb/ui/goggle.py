@@ -35,7 +35,7 @@ def event_handle_idle_func (eventHandler, build, pbar):
             build.handle_event (event, pbar)
     except Queue.Empty:
         pass
-    
+
     return True
 
 def scroll_tv_cb (model, path, iter, view):
@@ -77,7 +77,6 @@ def main (server, eventHandler):
 
     try:
         cmdline = server.runCommand(["getCmdLineAction"])
-        print(cmdline)
         if not cmdline:
             return 1
         ret = server.runCommand(cmdline)
