@@ -173,15 +173,15 @@ def main(server, eventHandler):
                 print("Loaded %d entries from dependency cache." % event.num_entries)
                 continue
 
-            if isinstance(event, bb.command.CookerCommandCompleted):
+            if isinstance(event, bb.command.CommandCompleted):
                 break
-            if isinstance(event, bb.command.CookerCommandSetExitCode):
+            if isinstance(event, bb.command.CommandFailed):
                 return_value = event.exitcode
-                continue
-            if isinstance(event, bb.command.CookerCommandFailed):
-                return_value = 1
                 logger.error("Command execution failed: %s" % event.error)
                 break
+            if isinstance(event, bb.command.CommandExit):
+                return_value = event.exitcode
+                continue
             if isinstance(event, bb.cooker.CookerExit):
                 break
             if isinstance(event, bb.event.MultipleProviders):
