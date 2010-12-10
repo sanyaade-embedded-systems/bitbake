@@ -23,7 +23,7 @@ import gobject
 import logging
 
 class RunningBuildModel (gtk.TreeStore):
-    (COL_TYPE, COL_PACKAGE, COL_TASK, COL_MESSAGE, COL_ICON, COL_ACTIVE) = (0, 1, 2, 3, 4, 5)
+    (COL_TYPE, COL_PACKAGE, COL_TASK, COL_MESSAGE, COL_ICON, COL_COLOR, COL_NUM_ACTIVE) = (0, 1, 2, 3, 4, 5, 6)
     def __init__ (self):
         gtk.TreeStore.__init__ (self,
                                 gobject.TYPE_STRING,
@@ -31,7 +31,8 @@ class RunningBuildModel (gtk.TreeStore):
                                 gobject.TYPE_STRING,
                                 gobject.TYPE_STRING,
                                 gobject.TYPE_STRING,
-                                gobject.TYPE_BOOLEAN)
+                                gobject.TYPE_STRING,
+                                gobject.TYPE_INT)
 
 class RunningBuild (gobject.GObject):
     __gsignals__ = {
@@ -66,29 +67,38 @@ class RunningBuild (gobject.GObject):
             pid = event.pid
         if hasattr(event, 'process'):
             pid = event.process
-        if pid:
-            if pid in self.pids_to_task:
-                (package, task) = self.pids_to_task[pid]
-                parent = self.tasks_to_iter[(package, task)]
+
+        if pid in self.pids_to_task:
+            (package, task) = self.pids_to_task[pid]
+            parent = self.tasks_to_iter[(package, task)]
 
         if(isinstance(event, logging.LogRecord)):
             if (event.msg.startswith ("Running task")):
                 return # don't add these to the list
 
+
             if event.levelno >= logging.ERROR:
                 icon = "dialog-error"
+                color = "#ffaaaa"
             elif event.levelno >= logging.WARNING:
                 icon = "dialog-warning"
+                color = "#F88017"
             else:
                 icon = None
+                color = "#ffffff"
 
+            if event.args:
+                message = event.msg % event.args
+            else:
+                message = event.msg
             self.model.append(parent,
                               (None,
                                package,
                                task,
-                               event.msg % event.args,
+                               message,
                                icon,
-                               False))
+                               color,
+                               0))
 
         if isinstance(event, bb.build.TaskStarted):
             (package, task) = (event._package, event._task)
@@ -107,47 +117,66 @@ class RunningBuild (gobject.GObject):
                                                    None,
                                                    "Package: %s" % (package),
                                                    None,
-                                                   False))
+                                                   "#FFFFFF",
+                                                   0))
                 self.tasks_to_iter[(package, None)] = parent
 
             # Because this parent package now has an active child mark it as
             # such.
+            # @todo if parent is already in error, don't mark it green
+            # But will this ever happen?  Do we always bail immediately when
+            # oen task fails?  Hell if I know...
             self.model.set(parent, self.model.COL_ICON, "gtk-execute")
+            self.model.set(parent, self.model.COL_COLOR, "#aaffaa")
 
             # Add an entry in the model for this task
             i = self.model.append (parent, (None,
                                             package,
                                             task,
                                             "Task: %s" % (task),
-                                            None,
-                                            False))
+                                            "gtk-execute",
+                                            "#aaffaa",
+                                            0))
+
+            # update the parent's active task count
+            num_active = self.model.get(parent, self.model.COL_NUM_ACTIVE)[0] + 1
+            self.model.set(parent, self.model.COL_NUM_ACTIVE, num_active)
 
             # Save out the iter so that we can find it when we have a message
             # that we need to attach to a task.
             self.tasks_to_iter[(package, task)] = i
 
-            # Mark this task as active.
-            self.model.set(i, self.model.COL_ICON, "gtk-execute")
-
         elif isinstance(event, bb.build.TaskBase):
+            current = self.tasks_to_iter[(package, task)]
+            parent = self.tasks_to_iter[(package, None)]
+
+            # update the parent's active count
+            num_active = self.model.get(parent, self.model.COL_NUM_ACTIVE)[0] - 1
+            self.model.set(parent, self.model.COL_NUM_ACTIVE, num_active)
 
             if isinstance(event, bb.build.TaskFailed):
-                # Mark the task as failed
-                i = self.tasks_to_iter[(package, task)]
-                self.model.set(i, self.model.COL_ICON, "dialog-error")
+                # Mark the task and parent as failed
+                icon = "dialog-error"
+                color = "#ffaaaa"
 
-                # Mark the parent package as failed
-                i = self.tasks_to_iter[(package, None)]
-                self.model.set(i, self.model.COL_ICON, "dialog-error")
+                for i in (current, parent):
+                    self.model.set(i, self.model.COL_ICON, icon)
+                    self.model.set(i, self.model.COL_COLOR, color)
             else:
+                icon = None
+                color = "#ffffff"
+
                 # Mark the task as inactive
-                i = self.tasks_to_iter[(package, task)]
-                self.model.set(i, self.model.COL_ICON, None)
+                self.model.set(current, self.model.COL_ICON, icon)
+                self.model.set(current, self.model.COL_COLOR, color)
 
-                # Mark the parent package as inactive
+                # Mark the parent package as inactive, but make sure to
+                # preserve error and active states
                 i = self.tasks_to_iter[(package, None)]
-                self.model.set(i, self.model.COL_ICON, None)
-
+                if self.model.get(parent, self.model.COL_ICON) != 'dialog-error':
+                    self.model.set(parent, self.model.COL_ICON, icon)
+                    if num_active == 0:
+                        self.model.set(parent, self.model.COL_COLOR, "#ffffff")
 
             # Clear the iters and the pids since when the task goes away the
             # pid will no longer be used for messages
@@ -197,4 +226,5 @@ class RunningBuildTreeView (gtk.TreeView):
         # The message of the build.
         renderer = gtk.CellRendererText ()
         col = gtk.TreeViewColumn ("Message", renderer, text=3)
+        col.add_attribute(renderer, 'background', 5)
         self.append_column (col)

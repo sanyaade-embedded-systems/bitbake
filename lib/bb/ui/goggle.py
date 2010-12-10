@@ -41,6 +41,13 @@ def event_handle_idle_func (eventHandler, build, pbar):
 def scroll_tv_cb (model, path, iter, view):
     view.scroll_to_cell (path)
 
+
+# @todo hook these into the GUI so the user has feedback...
+def running_build_failed_cb (running_build):
+    print("build failed!\n")
+def running_build_succeeded_cb (running_build):
+    print("build success!\n")
+
 class MainWindow (gtk.Window):
     def __init__ (self):
         gtk.Window.__init__ (self, gtk.WINDOW_TOPLEVEL)
@@ -65,6 +72,9 @@ def main (server, eventHandler):
     running_build = RunningBuild ()
     window.cur_build_tv.set_model (running_build.model)
     running_build.model.connect("row-inserted", scroll_tv_cb, window.cur_build_tv)
+    running_build.connect ("build-succeeded", running_build_succeeded_cb,)
+    running_build.connect ("build-failed", running_build_failed_cb)
+
     try:
         cmdline = server.runCommand(["getCmdLineAction"])
         print(cmdline)
