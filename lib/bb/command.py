@@ -55,6 +55,7 @@ class Command:
     """
     def __init__(self, cooker):
         self.cooker = cooker
+        self.event = bb.event.EventDispatcher()
         self.cmds_sync = CommandsSync()
         self.cmds_async = CommandsAsync()
 
@@ -120,11 +121,11 @@ class Command:
 
     def finishAsyncCommand(self, msg=None, code=None):
         if msg:
-            bb.event.fire(CommandFailed(msg), self.cooker.configuration.event_data)
+            self.event.fire(CommandFailed(msg))
         elif code:
-            bb.event.fire(CommandExit(code), self.cooker.configuration.event_data)
+            self.event.fire(CommandExit(code))
         else:
-            bb.event.fire(CommandCompleted(), self.cooker.configuration.event_data)
+            self.event.fire(CommandCompleted())
         self.currentAsyncCommand = None
 
 

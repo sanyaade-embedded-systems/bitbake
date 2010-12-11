@@ -62,7 +62,10 @@ class BBCooker:
     Manages one bitbake build run
     """
 
-    def __init__(self, configuration, server_registration_cb):
+    def __init__(self, configuration, server_registration_cb, handler=None):
+        self.event = bb.event.MetadataDispatcher()
+        if handler:
+            self.event.register(handler)
         self.status = None
         self.appendlist = {}
 
@@ -102,6 +105,7 @@ class BBCooker:
                 termios.tcsetattr(fd, termios.TCSANOW, tcattr)
 
         self.command = bb.command.Command(self)
+        self.command.event.register(self.event)
         self.state = state.initial
 
         self.parser = None
@@ -208,6 +212,7 @@ class BBCooker:
             bb.data.expandKeys(localdata)
 
             taskdata = bb.taskdata.TaskData(self.configuration.abort)
+            taskdata.event.register(self.event)
             taskdata.add_provider(localdata, self.status, pkgs_to_build[0])
             taskdata.add_unresolved(localdata, self.status)
 
@@ -219,7 +224,7 @@ class BBCooker:
 
         if fn:
             try:
-                envdata = bb.cache.Cache.loadDataFull(fn, self.get_file_appends(fn), self.configuration.data)
+                envdata = bb.cache.Cache.loadDataFull(fn, self.get_file_appends(fn), self.configuration.data, self.event)
             except Exception, e:
                 parselog.exception("Unable to read %s", fn)
                 raise
@@ -254,6 +259,7 @@ class BBCooker:
         bb.data.update_data(localdata)
         bb.data.expandKeys(localdata)
         taskdata = bb.taskdata.TaskData(self.configuration.abort)
+        taskdata.event.register(self.event)
 
         runlist = []
         for k in pkgs_to_build:
@@ -262,6 +268,7 @@ class BBCooker:
         taskdata.add_unresolved(localdata, self.status)
 
         rq = bb.runqueue.RunQueue(self, self.configuration.data, self.status, taskdata, runlist)
+        rq.event.register(self.event)
         rq.prepare_runqueue()
 
         seen_fnids = []
@@ -327,14 +334,13 @@ class BBCooker:
 
         return depend_tree
 
-
     def generateDepTreeEvent(self, pkgs_to_build, task):
         """
         Create a task dependency graph of pkgs_to_build.
         Generate an event with the result
         """
         depgraph = self.generateDepTreeData(pkgs_to_build, task)
-        bb.event.fire(bb.event.DepTreeGenerated(depgraph), self.configuration.data)
+        self.event.fire(bb.event.DepTreeGenerated(depgraph))
 
     def generateDotGraphFiles(self, pkgs_to_build, task):
         """
@@ -521,20 +527,17 @@ class BBCooker:
 
         data = _parse(os.path.join("conf", "bitbake.conf"), data)
 
-        self.configuration.data = data
-
         # Handle any INHERITs and inherit the base class
-        inherits  = ["base"] + (bb.data.getVar('INHERIT', self.configuration.data, True ) or "").split()
+        inherits  = ["base"] + (bb.data.getVar('INHERIT', data, True ) or "").split()
         for inherit in inherits:
-            self.configuration.data = _parse(os.path.join('classes', '%s.bbclass' % inherit), self.configuration.data, True )
+            data = _parse(os.path.join('classes', '%s.bbclass' % inherit), data, True )
 
-        # Nomally we only register event handlers at the end of parsing .bb files
-        # We register any handlers we've found so far here...
-        for var in bb.data.getVar('__BBHANDLERS', self.configuration.data) or []:
-            bb.event.register(var, bb.data.getVar(var, self.configuration.data))
-
-        bb.fetch.fetcher_init(self.configuration.data)
-        bb.event.fire(bb.event.ConfigParsed(), self.configuration.data)
+        self.configuration.data = data
+        self.event.register_metadata_handlers(data)
+        # We don't want these event handlers being registered more than once
+        data.delVar('__BBHANDLERS')
+        bb.fetch.fetcher_init(data)
+        self.event.fire(bb.event.ConfigParsed())
 
     def handleCollections( self, collections ):
         """Handle collections"""
@@ -621,7 +624,7 @@ class BBCooker:
 
         self.status = bb.cache.CacheData()
         infos = bb.cache.Cache.parse(fn, self.get_file_appends(fn), \
-                                     self.configuration.data)
+                                     self.configuration.data, self.event)
         maininfo = None
         for vfn, info in infos:
             self.status.add_from_recipeinfo(vfn, info)
@@ -646,15 +649,17 @@ class BBCooker:
 
         # Setup taskdata structure
         taskdata = bb.taskdata.TaskData(self.configuration.abort)
+        taskdata.event.register(self.event)
         taskdata.add_provider(self.configuration.data, self.status, item)
 
         buildname = bb.data.getVar("BUILDNAME", self.configuration.data)
-        bb.event.fire(bb.event.BuildStarted(buildname, [item]), self.configuration.event_data)
+        self.event.fire(bb.event.BuildStarted(buildname, [item]))
 
         # Execute the runqueue
         runlist = [[item, "do_%s" % task]]
 
         rq = bb.runqueue.RunQueue(self, self.configuration.data, self.status, taskdata, runlist)
+        rq.event.register(self.event)
 
         def buildFileIdle(server, rq, abort):
 
@@ -671,7 +676,7 @@ class BBCooker:
                 failures += len(exc.args)
                 retval = False
             if not retval:
-                bb.event.fire(bb.event.BuildCompleted(buildname, item, failures), self.configuration.event_data)
+                self.event.fire(bb.event.BuildCompleted(buildname, item, failures))
                 self.command.finishAsyncCommand()
                 return False
             if retval is True:
@@ -708,7 +713,7 @@ class BBCooker:
                 failures += len(exc.args)
                 retval = False
             if not retval:
-                bb.event.fire(bb.event.BuildCompleted(buildname, targets, failures), self.configuration.event_data)
+                self.event.fire(bb.event.BuildCompleted(buildname, targets, failures))
                 self.command.finishAsyncCommand()
                 return False
             if retval is True:
@@ -718,13 +723,14 @@ class BBCooker:
         self.buildSetVars()
 
         buildname = bb.data.getVar("BUILDNAME", self.configuration.data)
-        bb.event.fire(bb.event.BuildStarted(buildname, targets), self.configuration.event_data)
+        self.event.fire(bb.event.BuildStarted(buildname, targets))
 
         localdata = data.createCopy(self.configuration.data)
         bb.data.update_data(localdata)
         bb.data.expandKeys(localdata)
 
         taskdata = bb.taskdata.TaskData(self.configuration.abort)
+        taskdata.event.register(self.event)
 
         runlist = []
         for k in targets:
@@ -733,6 +739,7 @@ class BBCooker:
         taskdata.add_unresolved(localdata, self.status)
 
         rq = bb.runqueue.RunQueue(self, self.configuration.data, self.status, taskdata, runlist)
+        rq.event.register(self.event)
 
         self.server_registration_cb(buildTargetsIdle, rq)
 
@@ -774,6 +781,7 @@ class BBCooker:
             bb.data.renameVar("__depends", "__base_depends", self.configuration.data)
 
             self.parser = CookerParser(self, filelist, masked)
+            self.parser.event.register(self.event)
             self.state = state.parsing
 
         if not self.parser.parse_next():
@@ -785,7 +793,6 @@ class BBCooker:
         return True
 
     def checkPackages(self, pkgs_to_build):
-
         if len(pkgs_to_build) == 0:
             raise NothingToBuild
 
@@ -834,7 +841,7 @@ class BBCooker:
 
         if not len(files):
             collectlog.error("no recipe files to build, check your BBPATH and BBFILES?")
-            bb.event.fire(CookerExit(), self.configuration.event_data)
+            self.event.fire(CookerExit())
 
         newfiles = set()
         for f in files:
@@ -891,9 +898,10 @@ class BBCooker:
 
     def shutdown(self):
         self.state = state.shutdown
- 
+
     def stop(self):
         self.state = state.stop
+
 
 class CookerExit(bb.event.Event):
     """
@@ -905,13 +913,15 @@ class CookerExit(bb.event.Event):
 
 def parse_file(task):
     filename, appends = task
-    return True, bb.cache.Cache.parse(filename, appends, parse_file.cfg)
+    return True, bb.cache.Cache.parse(filename, appends, parse_file.cfg, parse_file.dispatcher)
 
 class CookerParser(object):
     def __init__(self, cooker, filelist, masked):
         self.filelist = filelist
         self.cooker = cooker
         self.cfgdata = cooker.configuration.data
+        self.event = bb.event.MetadataDispatcher()
+        self.pool = None
 
         # Accounting statistics
         self.parsed = 0
@@ -939,13 +949,14 @@ class CookerParser(object):
         self.toparse = self.total - len(self.fromcache)
         self.progress_chunk = max(self.toparse / 100, 1)
 
-        self.start()
+        logger.info("parser constructed")
 
     def start(self):
         def init(cfg):
             parse_file.cfg = cfg
+            parse_file.dispatcher = self.event
 
-        bb.event.fire(bb.event.ParseStarted(self.toparse), self.cfgdata)
+        self.event.fire(bb.event.ParseStarted(self.toparse))
 
         self.pool = multiprocessing.Pool(self.num_processes, init, [self.cfgdata])
         parsed = self.pool.imap(parse_file, self.willparse)
@@ -959,7 +970,7 @@ class CookerParser(object):
                                             self.skipped, self.masked,
                                             self.virtuals, self.error,
                                             self.total)
-            bb.event.fire(event, self.cfgdata)
+            self.event.fire(event)
         else:
             self.pool.terminate()
         self.pool.join()
@@ -974,12 +985,18 @@ class CookerParser(object):
             yield not cached, infos
 
     def parse_next(self):
+        if not self.pool:
+            logger.info("Initializing parser")
+            self.start()
+            return
+
+        logger.info("Parsing a recipe")
         try:
             parsed, result = self.results.next()
         except StopIteration:
             self.shutdown()
             return False
-        except Exception as exc:
+        except Exception:
             self.shutdown(clean=False)
             sys.exit(1)
 
@@ -988,22 +1005,28 @@ class CookerParser(object):
         if parsed:
             self.parsed += 1
             if self.parsed % self.progress_chunk == 0:
-                bb.event.fire(bb.event.ParseProgress(self.parsed),
-                              self.cfgdata)
+               self.event.fire(bb.event.ParseProgress(self.parsed))
         else:
             self.cached += 1
 
-        for virtualfn, info in result:
+        self.skipped += self.add_infos(result, parsed)
+        return True
+
+    def add_infos(self, infos, parsed=True):
+        skipped = 0
+        for virtualfn, info in infos:
             if info.skipped:
-                self.skipped += 1
+                skipped += 1
             else:
                 self.bb_cache.add_info(virtualfn, info, self.cooker.status,
-                                        parsed=parsed)
-        return True
+                                       parsed=parsed)
+        return skipped
 
     def reparse(self, filename):
         infos = self.bb_cache.parse(filename,
                                     self.cooker.get_file_appends(filename),
-                                    self.cfgdata)
+                                    self.cfgdata,
+                                    self.event)
+        self.add_infos(infos, parsed=True)
         for vfn, info in infos:
             self.cooker.status.add_from_recipeinfo(vfn, info)

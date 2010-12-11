@@ -159,6 +159,11 @@ Default BBFILES are the .bb files in the current directory.""")
 
     options, args = parser.parse_args(sys.argv)
 
+    console = logging.StreamHandler(sys.__stdout__)
+    format = bb.msg.BBLogFormatter("%(levelname)s: %(message)s")
+    console.setFormatter(format)
+    logging.getLogger('BitBake').addHandler(console)
+
     configuration = BBConfiguration(options)
     configuration.pkgs_to_build.extend(args[1:])
 
@@ -214,6 +219,11 @@ Default BBFILES are the .bb files in the current directory.""")
     return return_value
 
 if __name__ == "__main__":
-    ret = main()
+    try:
+        ret = main()
+    except Exception:
+        ret = 1
+        import traceback
+        traceback.print_exc()
     sys.exit(ret)
 

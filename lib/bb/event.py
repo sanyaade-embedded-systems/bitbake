@@ -22,166 +22,142 @@ BitBake build tools.
 # with this program; if not, write to the Free Software Foundation, Inc.,
 # 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 
-import os, sys
-import warnings
-import pickle
+
+import copy
 import logging
-import atexit
+try:
+    import cPickle as pickle
+except ImportError:
+    import pickle
+import warnings
 import bb.utils
 
-# This is the pid for which we should generate the event. This is set when
-# the runqueue forks off.
-worker_pid = 0
-worker_pipe = None
 
-class Event(object):
-    """Base class for events"""
+logger = logging.getLogger('BitBake.Event')
+
+
+class EventDispatcher(object):
+    """Class to manage firing of and handling of events"""
 
     def __init__(self):
-        self.pid = worker_pid
+        self.handlers = []
 
-NotHandled = 0
-Handled    = 1
+    @classmethod
+    def compile(cls, code):
+        context = {}
+        defined = 'def _handler(e):\n{0}'.format(code)
+        bb.utils.better_exec(defined, context, defined)
+        return bb.utils.better_eval('_handler', context)
 
-Registered        = 10
-AlreadyRegistered = 14
+    def register(self, handler):
+        if isinstance(handler, basestring):
+            handler = self.compile(handler)
+        self.handlers.append(handler)
 
-# Internal
-_handlers = {}
-_ui_handlers = {}
-_ui_handler_seq = 0
+    def unregister(self, handler):
+        self.handlers.remove(handler)
 
-# For compatibility
-bb.utils._context["NotHandled"] = NotHandled
-bb.utils._context["Handled"] = Handled
+    def fire(self, event):
+        for handler in self.handlers:
+            logger.info('%s: handling %s with %s', self, event, handler)
+            handler(event)
 
-def fire_class_handlers(event, d):
-    import bb.msg
-    if isinstance(event, MsgBase):
-        return
+    def __len__(self):
+        return len(self.handlers)
 
-    for handler in _handlers:
-        h = _handlers[handler]
-        event.data = d
-        if type(h).__name__ == "code":
-            locals = {"e": event}
-            bb.utils.simple_exec(h, locals)
-            ret = bb.utils.better_eval("tmpHandler(e)", locals)
-            if ret is not None:
-                warnings.warn("Using Handled/NotHandled in event handlers is deprecated",
-                              DeprecationWarning, stacklevel = 2)
-        else:
-            h(event)
-        del event.data
+    def __contains__(self, handler):
+        if isinstance(handler, basestring):
+            handler = self.compile(handler)
+        return handler in self.handlers
 
-ui_queue = []
-@atexit.register
-def print_ui_queue():
-    """If we're exiting before a UI has been spawned, display any queued
-    LogRecords to the console."""
-    logger = logging.getLogger("BitBake")
-    if not _ui_handlers:
-        console = logging.StreamHandler(sys.stdout)
-        console.setFormatter(logging.Formatter("%(levelname)s: %(message)s"))
-        logger.handlers = [console]
-        while ui_queue:
-            event = ui_queue.pop()
-            if isinstance(event, logging.LogRecord):
-                logger.handle(event)
+    def __iadd__(self, other):
+        return self.register(other)
 
-def fire_ui_handlers(event, d):
-    if not _ui_handlers:
-        # No UI handlers registered yet, queue up the messages
-        ui_queue.append(event)
-        return
+    def __isub__(self, other):
+        return self.unregister(other)
 
-    errors = []
-    for h in _ui_handlers:
-        #print "Sending event %s" % event
+    def __call__(self, event):
+        return self.fire(event)
+
+class MetadataDispatcher(EventDispatcher):
+    def register_metadata_handlers(self, metadata):
+        mdhandler = _MetadataHandler(metadata)
+        for var in bb.data.getVar('__BBHANDLERS', metadata) or []:
+            value = metadata.getVar(var, True)
+            if value:
+                mdhandler.register(value)
+
+        self.register(mdhandler)
+        return mdhandler
+
+class _MetadataHandler(EventDispatcher):
+    """Class to fire events in a particular way for handling by the metadata
+
+    This class injects the metadata at fire-time, so that it can be used
+    to run the event handlers in the metadata.
+    """
+    def __init__(self, metadata):
+        self.metadata = metadata
+        EventDispatcher.__init__(self)
+
+    def fire(self, event):
+        logger.info("%s: handling %s", self, event)
+        event = copy.copy(event)
+        event.data = self.metadata
+        EventDispatcher.fire(self, event)
+
+class ChainedHandler(object):
+    def __init__(self, dispatcher):
+        self.dispatcher = dispatcher
+
+    def __call__(self, event):
+        logger.info("%s: handling %s", self, event)
+        self.dispatcher.fire(event)
+
+class PipeHandler(object):
+    """Event handler which dispatches events over a pipe"""
+
+    def __init__(self, pipe):
+        self.pipe = pipe
+
+    def __call__(self, event):
+        logger.info("%s: handling %s", self, event)
         try:
-             # We use pickle here since it better handles object instances
-             # which xmlrpc's marshaller does not. Events *must* be serializable
-             # by pickle.
-            _ui_handlers[h].event.send(event)
-        except:
-            errors.append(h)
-    for h in errors:
-        del _ui_handlers[h]
+            pickle.dump(event, self.pipe)
+        except Exception as exc:
+            logger.fatal('Failed to send %s event: %s', event, exc)
 
-def fire(event, d):
-    """Fire off an Event"""
+class QueueHandler(object):
+    """Event handler which dispatches events over a Queue"""
 
-    # We can fire class handlers in the worker process context and this is
-    # desired so they get the task based datastore.
-    # UI handlers need to be fired in the server context so we defer this. They
-    # don't have a datastore so the datastore context isn't a problem.
+    def __init__(self, queue):
+        self.queue = queue
 
-    fire_class_handlers(event, d)
-    if worker_pid != 0:
-        worker_fire(event, d)
-    else:
-        fire_ui_handlers(event, d)
+    def __call__(self, event):
+        logger.info("%s: handling %s", self, event)
+        try:
+            pickle.dumps(event)
+        except Exception as exc:
+            logger.fatal("Unable to pickle event %s: %s", event, exc)
 
-def worker_fire(event, d):
-    data = "<event>" + pickle.dumps(event) + "</event>"
-    try:
-        if os.write(worker_pipe, data) != len (data):
-            print("Error sending event to server (short write)")
-    except OSError:
-        sys.exit(1)
+        self.queue.put(event)
 
-def fire_from_worker(event, d):
-    if not event.startswith("<event>") or not event.endswith("</event>"):
-        print("Error, not an event")
-        return
-    event = pickle.loads(event[7:-8])
-    fire_ui_handlers(event, d)
+class LogHandler(logging.Handler):
+    """Dispatch logging messages as bitbake events"""
 
-def register(name, handler):
-    """Register an Event handler"""
+    def __init__(self, dispatcher):
+        self.dispatcher = dispatcher
 
-    # already registered
-    if name in _handlers:
-        return AlreadyRegistered
+    def emit(self, record):
+        self.dispatcher.fire(record)
 
-    if handler is not None:
-        # handle string containing python code
-        if type(handler).__name__ == "str":
-            tmp = "def tmpHandler(e):\n%s" % handler
-            comp = bb.utils.better_compile(tmp, "tmpHandler(e)", "bb.event._registerCode")
-            _handlers[name] = comp
-        else:
-            _handlers[name] = handler
-
-        return Registered
-
-def remove(name, handler):
-    """Remove an Event handler"""
-    _handlers.pop(name)
-
-def register_UIHhandler(handler):
-    bb.event._ui_handler_seq = bb.event._ui_handler_seq + 1
-    _ui_handlers[_ui_handler_seq] = handler
-    return _ui_handler_seq
-
-def unregister_UIHhandler(handlerNum):
-    if handlerNum in _ui_handlers:
-        del _ui_handlers[handlerNum]
-    return
-
-def getName(e):
-    """Returns the name of a class or class instance"""
-    if getattr(e, "__name__", None) == None:
-        return e.__class__.__name__
-    else:
-        return e.__name__
+class Event(object):
+    pass
 
 class ConfigParsed(Event):
-    """Configuration Parsing Complete"""
+    pass
 
 class RecipeParsed(Event):
-    """ Recipe Parsing Complete """
-
     def __init__(self, fn):
         self.fn = fn
         Event.__init__(self)
@@ -204,8 +180,6 @@ class StampUpdate(Event):
     targets = property(getTargets)
 
 class BuildBase(Event):
-    """Base class for bbmake run events"""
-
     def __init__(self, n, p, failures = 0):
         self._name = n
         self._pkgs = p
@@ -231,32 +205,19 @@ class BuildBase(Event):
         self.data = cfg
 
     def getFailures(self):
-        """
-        Return the number of failed packages
-        """
         return self._failures
 
     pkgs = property(getPkgs, setPkgs, None, "pkgs property")
     name = property(getName, setName, None, "name property")
     cfg = property(getCfg, setCfg, None, "cfg property")
 
-
-
-
-
 class BuildStarted(BuildBase):
-    """bbmake build run started"""
-
+    pass
 
 class BuildCompleted(BuildBase):
-    """bbmake build run completed"""
-
-
-
+    pass
 
 class NoProvider(Event):
-    """No Provider for an Event"""
-
     def __init__(self, item, runtime=False, dependees=None):
         Event.__init__(self)
         self._item = item
@@ -270,8 +231,6 @@ class NoProvider(Event):
         return self._runtime
 
 class MultipleProviders(Event):
-    """Multiple Providers"""
-
     def  __init__(self, item, candidates, runtime = False):
         Event.__init__(self)
         self._item = item
@@ -279,32 +238,20 @@ class MultipleProviders(Event):
         self._is_runtime = runtime
 
     def isRuntime(self):
-        """
-        Is this a runtime issue?
-        """
         return self._is_runtime
 
     def getItem(self):
-        """
-        The name for the to be build item
-        """
         return self._item
 
     def getCandidates(self):
-        """
-        Get the possible Candidates for a PROVIDER.
-        """
         return self._candidates
 
 class ParseStarted(Event):
-    """Recipe parsing for the runqueue has begun"""
     def __init__(self, total):
         Event.__init__(self)
         self.total = total
 
 class ParseCompleted(Event):
-    """Recipe parsing for the runqueue has completed"""
-
     def __init__(self, cached, parsed, skipped, masked, virtuals, errors, total):
         Event.__init__(self)
         self.cached = cached
@@ -317,67 +264,57 @@ class ParseCompleted(Event):
         self.total = total
 
 class ParseProgress(Event):
-    """Recipe parsing progress"""
-
     def __init__(self, current):
         self.current = current
 
 class CacheLoadStarted(Event):
-    """Loading of the dependency cache has begun"""
     def __init__(self, total):
         Event.__init__(self)
         self.total = total
 
 class CacheLoadProgress(Event):
-    """Cache loading progress"""
     def __init__(self, current):
         Event.__init__(self)
         self.current = current
 
 class CacheLoadCompleted(Event):
-    """Cache loading is complete"""
     def __init__(self, total, num_entries):
         Event.__init__(self)
         self.total = total
         self.num_entries = num_entries
 
-
 class DepTreeGenerated(Event):
-    """
-    Event when a dependency tree has been generated
-    """
-
     def __init__(self, depgraph):
         Event.__init__(self)
         self._depgraph = depgraph
 
-class MsgBase(Event):
-    """Base class for messages"""
 
+# Deprecated events
+class MsgBase(Event):
     def __init__(self, msg):
         self._message = msg
         Event.__init__(self)
 
 class MsgDebug(MsgBase):
-    """Debug Message"""
+    pass
 
 class MsgNote(MsgBase):
-    """Note Message"""
+    pass
 
 class MsgWarn(MsgBase):
-    """Warning Message"""
+    pass
 
 class MsgError(MsgBase):
-    """Error Message"""
+    pass
 
 class MsgFatal(MsgBase):
-    """Fatal Message"""
+    pass
 
 class MsgPlain(MsgBase):
-    """General output"""
+    pass
 
-class LogHandler(logging.Handler):
-    """Dispatch logging messages as bitbake events"""
 
-    def emit(self, record):
-        fire(record, None)
+def getName(event):
+    warnings.warn('bb.event.getName will soon be deprecated',
+                  PendingDeprecationWarning, stacklevel=2)
+    return event.__class__.__name__

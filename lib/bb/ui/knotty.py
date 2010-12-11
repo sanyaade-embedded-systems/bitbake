@@ -107,8 +107,10 @@ def main(server, eventHandler):
     while True:
         try:
             event = eventHandler.get()
-
             helper.eventHandler(event)
+            logger.info("event: %s", event)
+            continue
+
             if isinstance(event, bb.runqueue.runQueueExitWait):
                 if not shutdown:
                     shutdown = 1

@@ -49,38 +49,19 @@ class ServerCommunicator():
                 pass
 
 
-class EventAdapter():
-    """
-    Adapter to wrap our event queue since the caller (bb.event) expects to
-    call a send() method, but our actual queue only has put()
-    """
-    def __init__(self, queue):
-        self.queue = queue
-
-    def send(self, event):
-        try:
-            self.queue.put(event)
-        except Exception, err:
-            print("EventAdapter puked: %s" % str(err))
-
-
 class ProcessServer(Process):
     def __init__(self, command_channel, event_queue, configuration):
         Process.__init__(self)
         self.command_channel = command_channel
         self.event_queue = event_queue
-        self.event = EventAdapter(event_queue)
         self.configuration = configuration
-        self.cooker = BBCooker(configuration, self.register_idle_function)
+        self.cooker = BBCooker(configuration, self.register_idle_function,
+                               bb.event.QueueHandler(self.event_queue))
         self._idlefunctions = {}
-        self.event_handle = bb.event.register_UIHhandler(self)
         self.quit = False
 
         self.keep_running = Event()
         self.keep_running.set()
-
-        for event in bb.event.ui_queue:
-            self.event_queue.put(event)
 
     def register_idle_function(self, function, data):
         """Register a function to be called while the server is idle"""
@@ -95,9 +76,6 @@ class ProcessServer(Process):
 
     def main(self):
         """Server main loop"""
-        # Ensure logging messages get sent to the UI as events
-        logger.addHandler(bb.event.LogHandler())
-
         # Ignore SIGINT within the server, as all SIGINT handling is done by
         # the UI and communicated to us
         signal.signal(signal.SIGINT, signal.SIG_IGN)
@@ -112,7 +90,6 @@ class ProcessServer(Process):
                 logger.exception('Running command %s', command)
 
         self.event_queue.cancel_join_thread()
-        bb.event.unregister_UIHhandler(self.event_handle)
         self.command_channel.close()
 
     def idle_commands(self, delay):

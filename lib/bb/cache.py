@@ -139,6 +139,8 @@ class Cache(object):
 
     def __init__(self, data):
         self.cachedir = bb.data.getVar("CACHE", data, True)
+        self.event = bb.event.EventDispatcher()
+
         self.clean = set()
         self.checked = set()
         self.depends_cache = {}
@@ -190,7 +192,7 @@ class Cache(object):
                 return
 
             cachesize = os.fstat(cachefile.fileno()).st_size
-            bb.event.fire(bb.event.CacheLoadStarted(cachesize), self.data)
+            self.event.fire(bb.event.CacheLoadStarted(cachesize))
 
             previous_percent = 0
             while cachefile:
@@ -207,12 +209,10 @@ class Cache(object):
                 current_percent = 100 * current_progress / cachesize
                 if current_percent > previous_percent:
                     previous_percent = current_percent
-                    bb.event.fire(bb.event.CacheLoadProgress(current_progress),
-                                  self.data)
+                    self.event.fire(bb.event.CacheLoadProgress(current_progress))
 
-            bb.event.fire(bb.event.CacheLoadCompleted(cachesize,
-                                                      len(self.depends_cache)),
-                          self.data)
+            self.event.fire(bb.event.CacheLoadCompleted(cachesize,
+                                                        len(self.depends_cache)))
 
     @staticmethod
     def virtualfn2realfn(virtualfn):
@@ -237,7 +237,7 @@ class Cache(object):
         return "virtual:" + cls + ":" + realfn
 
     @classmethod
-    def loadDataFull(cls, virtualfn, appends, cfgData):
+    def loadDataFull(cls, virtualfn, appends, cfgData, dispatcher=None):
         """
         Return a complete set of data for fn.
         To do this, we need to parse the file.
@@ -247,14 +247,15 @@ class Cache(object):
 
         logger.debug(1, "Parsing %s (full)", fn)
 
-        bb_data = cls.load_bbfile(fn, appends, cfgData)
-        return bb_data[virtual]
+        allmetadata = cls.load_bbfile(fn, appends, cfgData, dispatcher)
+        bb_data = allmetadata[virtual]
+        return bb_data
 
     @classmethod
-    def parse(cls, filename, appends, configdata):
+    def parse(cls, filename, appends, configdata, dispatcher):
         """Parse the specified filename, returning the recipe information"""
         infos = []
-        datastores = cls.load_bbfile(filename, appends, configdata)
+        datastores = cls.load_bbfile(filename, appends, configdata, dispatcher)
         depends = set()
         for variant, data in sorted(datastores.iteritems(),
                                     key=lambda i: i[0],
@@ -267,7 +268,7 @@ class Cache(object):
             infos.append((virtualfn, info))
         return infos
 
-    def load(self, filename, appends, configdata):
+    def load(self, filename, appends, configdata, dispatcher=None):
         """Obtain the recipe information for the specified filename,
         using cached values if available, otherwise parsing.
 
@@ -284,7 +285,7 @@ class Cache(object):
                 infos.append((virtualfn, self.depends_cache[virtualfn]))
         else:
             logger.debug(1, "Parsing %s", filename)
-            return self.parse(filename, appends, configdata)
+            return self.parse(filename, appends, configdata, dispatcher)
 
         return cached, infos
 
@@ -454,7 +455,7 @@ class Cache(object):
         self.add_info(file_name, info, cacheData, parsed)
 
     @staticmethod
-    def load_bbfile(bbfile, appends, config):
+    def load_bbfile(bbfile, appends, config, dispatcher=None):
         """
         Load and parse one .bb build file
         Return the data and whether parsing resulted in the file being skipped
@@ -481,6 +482,9 @@ class Cache(object):
             if appends:
                 data.setVar('__BBAPPEND', " ".join(appends), bb_data)
             bb_data = parse.handle(bbfile, bb_data)
+            if dispatcher:
+                dispatcher.register_metadata_handlers(bb_data)
+                dispatcher.fire(bb.event.RecipeParsed(bbfile))
             if chdir_back:
                 os.chdir(oldpath)
             return bb_data

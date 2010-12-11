@@ -314,16 +314,8 @@ def finalize(fn, d):
     bb.utils.simple_exec("\n".join(code), {"d": d})
     bb.data.update_data(d)
 
-    all_handlers = {}
-    for var in bb.data.getVar('__BBHANDLERS', d) or []:
-        # try to add the handler
-        handler = bb.data.getVar(var, d)
-        bb.event.register(var, handler)
-
     tasklist = bb.data.getVar('__BBTASKS', d) or []
     bb.build.add_tasks(tasklist, d)
-
-    bb.event.fire(bb.event.RecipeParsed(fn), d)
 
 def _create_variants(datastores, names, function):
     def create_variant(name, orig_d, arg = None):

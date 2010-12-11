@@ -42,6 +42,8 @@ class TaskData:
     BitBake Task Data implementation
     """
     def __init__(self, abort = True, tryaltconfigs = False):
+        self.event = bb.event.EventDispatcher()
+
         self.build_names_index = []
         self.run_names_index = []
         self.fn_index = []
@@ -369,7 +371,7 @@ class TaskData:
             return
 
         if not item in dataCache.providers:
-            bb.event.fire(bb.event.NoProvider(item, dependees=self.get_rdependees_str(item)), cfgData)
+            self.event.fire(bb.event.NoProvider(item, dependees=self.get_rdependees_str(item)))
             raise bb.providers.NoProvider(item)
 
         if self.have_build_target(item):
@@ -381,7 +383,7 @@ class TaskData:
         eligible = [p for p in eligible if not self.getfn_id(p) in self.failed_fnids]
 
         if not eligible:
-            bb.event.fire(bb.event.NoProvider(item, dependees=self.get_dependees_str(item)), cfgData)
+            self.event.fire(bb.event.NoProvider(item, dependees=self.get_dependees_str(item)))
             raise bb.providers.NoProvider(item)
 
         if len(eligible) > 1 and foundUnique == False:
@@ -389,7 +391,7 @@ class TaskData:
                 providers_list = []
                 for fn in eligible:
                     providers_list.append(dataCache.pkg_fn[fn])
-                bb.event.fire(bb.event.MultipleProviders(item, providers_list), cfgData)
+                self.event.fire(bb.event.MultipleProviders(item, providers_list))
             self.consider_msgs_cache.append(item)
 
         for fn in eligible:
@@ -418,14 +420,14 @@ class TaskData:
         all_p = bb.providers.getRuntimeProviders(dataCache, item)
 
         if not all_p:
-            bb.event.fire(bb.event.NoProvider(item, runtime=True, dependees=self.get_rdependees_str(item)), cfgData)
+            self.event.fire(bb.event.NoProvider(item, runtime=True, dependees=self.get_rdependees_str(item)))
             raise bb.providers.NoRProvider(item)
 
         eligible, numberPreferred = bb.providers.filterProvidersRunTime(all_p, item, cfgData, dataCache)
         eligible = [p for p in eligible if not self.getfn_id(p) in self.failed_fnids]
 
         if not eligible:
-            bb.event.fire(bb.event.NoProvider(item, runtime=True, dependees=self.get_rdependees_str(item)), cfgData)
+            self.event.fire(bb.event.NoProvider(item, runtime=True, dependees=self.get_rdependees_str(item)))
             raise bb.providers.NoRProvider(item)
 
         if len(eligible) > 1 and numberPreferred == 0:
@@ -433,7 +435,7 @@ class TaskData:
                 providers_list = []
                 for fn in eligible:
                     providers_list.append(dataCache.pkg_fn[fn])
-                bb.event.fire(bb.event.MultipleProviders(item, providers_list, runtime=True), cfgData)
+                self.event.fire(bb.event.MultipleProviders(item, providers_list, runtime=True))
             self.consider_msgs_cache.append(item)
 
         if numberPreferred > 1:
@@ -441,7 +443,7 @@ class TaskData:
                 providers_list = []
                 for fn in eligible:
                     providers_list.append(dataCache.pkg_fn[fn])
-                bb.event.fire(bb.event.MultipleProviders(item, providers_list, runtime=True), cfgData)
+                self.event.fire(bb.event.MultipleProviders(item, providers_list, runtime=True))
             self.consider_msgs_cache.append(item)
 
         # run through the list until we find one that we can build

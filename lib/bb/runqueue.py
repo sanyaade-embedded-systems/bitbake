@@ -175,6 +175,7 @@ class RunQueue:
         self.taskData = taskData
         self.cfgData = cfgData
         self.targets = targets
+        self.event = bb.event.EventDispatcher()
 
         self.number_tasks = int(bb.data.getVar("BB_NUMBER_THREADS", cfgData, 1) or 1)
         self.multi_provider_whitelist = (bb.data.getVar("MULTI_PROVIDER_WHITELIST", cfgData, 1) or "").split()
@@ -916,7 +917,7 @@ class RunQueue:
 
         self.state = runQueueRunning
 
-        event.fire(bb.event.StampUpdate(self.target_pairs, self.dataCache.stamp), self.cfgData)
+        self.event.fire(bb.event.StampUpdate(self.target_pairs, self.dataCache.stamp))
 
     def task_complete(self, task):
         """
@@ -950,7 +951,7 @@ class RunQueue:
         self.stats.taskFailed()
         fnid = self.runq_fnid[task]
         self.failed_fnids.append(fnid)
-        bb.event.fire(runQueueTaskFailed(task, self.stats, self), self.cfgData)
+        self.event.fire(runQueueTaskFailed(task, self.stats, self))
         if self.taskData.abort:
             self.state = runQueueCleanUp
 
@@ -989,7 +990,7 @@ class RunQueue:
                 pid, pipein, pipeout = self.fork_off_task(fn, task, taskname)
 
                 self.build_pids[pid] = task
-                self.build_pipes[pid] = runQueuePipe(pipein, pipeout, self.cfgData)
+                self.build_pipes[pid] = runQueuePipe(pipein, pipeout, self.cfgData, self.event)
                 self.runq_running[task] = 1
                 self.stats.taskActive()
 
@@ -1056,7 +1057,7 @@ class RunQueue:
             self.finish_runqueue_now()
         try:
             while self.stats.active > 0:
-                bb.event.fire(runQueueExitWait(self.stats.active), self.cfgData)
+                self.event.fire(runQueueExitWait(self.stats.active, self))
                 if self.runqueue_process_waitpid(self.task_complete, self.task_fail) is None:
                     return
         except:
@@ -1071,14 +1072,14 @@ class RunQueue:
         return
 
     def notify_task_started(self, task):
-        bb.event.fire(runQueueTaskStarted(task, self.stats, self), self.cfgData)
+        self.event.fire(runQueueTaskStarted(task, self.stats, self))
         logger.info("Running task %d of %d (ID: %s, %s)", self.stats.completed + self.stats.active + self.stats.failed + 1,
                                                           self.stats.total,
                                                           task,
                                                           self.get_user_idstring(task))
 
     def notify_task_completed(self, task):
-        bb.event.fire(runQueueTaskCompleted(task, self.stats, self), self.cfgData)
+        self.event.fire(runQueueTaskCompleted(task, self.stats, self))
 
     def fork_off_task(self, fn, task, taskname):
         sys.stdout.flush()
@@ -1090,15 +1091,14 @@ class RunQueue:
             bb.msg.fatal(bb.msg.domain.RunQueue, "fork failed: %d (%s)" % (e.errno, e.strerror))
         if pid == 0:
             os.close(pipein)
-            # Save out the PID so that the event can include it the
-            # events
-            bb.event.worker_pid = os.getpid()
-            bb.event.worker_pipe = pipeout
+
+            event = bb.event.MetadataDispatcher()
+            event.register(bb.event.PipeHandler(pipeout))
 
             # Child processes should send their messages to the UI
             # process via the server process, not print them
             # themselves
-            bblogger.handlers = [bb.event.LogHandler()]
+            bblogger.handlers = [bb.event.LogHandler(event)]
 
             self.state = runQueueChildProcess
             # Make the child the process group leader
@@ -1112,8 +1112,8 @@ class RunQueue:
             bb.data.setVar("__RUNQUEUE_DO_NOT_USE_EXTERNALLY", self, self.cooker.configuration.data)
             bb.data.setVar("__RUNQUEUE_DO_NOT_USE_EXTERNALLY2", fn, self.cooker.configuration.data)
             try:
-                the_data = bb.cache.Cache.loadDataFull(fn, self.cooker.get_file_appends(fn), self.cooker.configuration.data)
-                bb.build.exec_task(fn, taskname, the_data)
+                the_data = bb.cache.Cache.loadDataFull(fn, self.cooker.get_file_appends(fn), self.cooker.configuration.data, event)
+                bb.build.exec_task(fn, taskname, the_data, event)
             except Exception as exc:
                 logger.critical(str(exc))
                 os._exit(1)
@@ -1211,12 +1211,13 @@ class runQueuePipe():
     """
     Abstraction for a pipe between a worker thread and the server
     """
-    def __init__(self, pipein, pipeout, d):
+    def __init__(self, pipein, pipeout, d, event):
         self.fd = pipein
         os.close(pipeout)
         fcntl.fcntl(self.fd, fcntl.F_SETFL, fcntl.fcntl(self.fd, fcntl.F_GETFL) | os.O_NONBLOCK)
         self.queue = ""
         self.d = d
+        self.event = event
 
     def read(self):
         start = len(self.queue)
@@ -1227,7 +1228,7 @@ class runQueuePipe():
         end = len(self.queue)
         index = self.queue.find("</event>")
         while index != -1:
-            bb.event.fire_from_worker(self.queue[:index+8], self.d)
+            self.event.fire(self.queue[:index+8])
             self.queue = self.queue[index+8:]
             index = self.queue.find("</event>")
         return (end > start)

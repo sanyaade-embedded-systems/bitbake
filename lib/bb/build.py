@@ -253,7 +253,7 @@ def exec_func_shell(function, d, runfile, logfile, cwd=None, fakeroot=False):
     except bb.process.CmdError:
         raise FuncFailed(function, logfile.name)
 
-def exec_task(fn, task, d):
+def exec_task(fn, task, d, event=None):
     """Execute a BB 'task'
 
     Execution of a task involves a bit more setup than executing a function,
@@ -273,11 +273,14 @@ def exec_task(fn, task, d):
         data.expandKeys(localdata)
         data.setVar('BB_FILENAME', fn, d)
         data.setVar('BB_CURRENTTASK', task[3:], d)
-        event.fire(TaskStarted(task, localdata), localdata)
+        if event:
+            event.fire(TaskStarted(task, localdata))
         exec_func(task, localdata)
-        event.fire(TaskSucceeded(task, localdata), localdata)
+        if event:
+            event.fire(TaskSucceeded(task, localdata))
     except FuncFailed as exc:
-        event.fire(TaskFailed(exc.name, exc.logfile, localdata), localdata)
+        if event:
+            event.fire(TaskFailed(exc.name, exc.logfile, localdata))
         raise
 
     # make stamp, or cause event and raise exception
