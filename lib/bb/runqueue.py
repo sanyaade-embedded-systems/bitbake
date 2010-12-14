@@ -94,9 +94,9 @@ class RunQueueScheduler(object):
         """
         for tasknum in xrange(len(self.rqdata.runq_fnid)):
             taskid = self.prio_map[tasknum]
-            if self.rq.runq_running[taskid] == 1:
+            if taskid in self.rq.runq_running:
                 continue
-            if self.rq.runq_buildable[taskid] == 1:
+            if taskid in self.rq.runq_buildable:
                 yield taskid
 
     def next(self):
@@ -907,7 +907,6 @@ class RunQueue:
 
 
 class RunQueueExecute:
-
     def __init__(self, rq):
         self.rq = rq
         self.cooker = rq.cooker
@@ -917,9 +916,9 @@ class RunQueueExecute:
         self.number_tasks = int(bb.data.getVar("BB_NUMBER_THREADS", self.cfgData, 1) or 1)
         self.scheduler = bb.data.getVar("BB_SCHEDULER", self.cfgData, 1) or "speed"
 
-        self.runq_buildable = []
-        self.runq_running = []
-        self.runq_complete = []
+        self.runq_buildable = set()
+        self.runq_running = set()
+        self.runq_complete = set()
         self.build_pids = {}
         self.build_pipes = {}
         self.failed_fnids = []
@@ -1030,12 +1029,8 @@ class RunQueueExecuteTasks(RunQueueExecute):
 
         # Mark initial buildable tasks
         for task in xrange(self.stats.total):
-            self.runq_running.append(0)
-            self.runq_complete.append(0)
-            if len(self.rqdata.runq_depends[task]) == 0:
-                self.runq_buildable.append(1)
-            else:
-                self.runq_buildable.append(0)
+            if not self.rqdata.runq_depends[task]:
+                self.runq_buildable.add(task)
 
         event.fire(bb.event.StampUpdate(self.rqdata.target_pairs, self.rqdata.dataCache.stamp), self.cfgData)
 
@@ -1076,18 +1071,18 @@ class RunQueueExecuteTasks(RunQueueExecute):
         Look at the reverse dependencies and mark any task with
         completed dependencies as buildable
         """
-        self.runq_complete[task] = 1
+        self.runq_complete.add(task)
         for revdep in self.rqdata.runq_revdeps[task]:
-            if self.runq_running[revdep] == 1:
+            if revdep in self.runq_running:
                 continue
-            if self.runq_buildable[revdep] == 1:
+            if revdep in self.runq_buildable:
                 continue
             alldeps = 1
             for dep in self.rqdata.runq_depends[revdep]:
-                if self.runq_complete[dep] != 1:
+                if dep not in self.runq_complete:
                     alldeps = 0
             if alldeps == 1:
-                self.runq_buildable[revdep] = 1
+                self.runq_buildable.add(revdep)
                 fn = self.rqdata.taskData.fn_index[self.rqdata.runq_fnid[revdep]]
                 taskname = self.rqdata.runq_task[revdep]
                 logger.debug(1, "Marking task %s (%s, %s) as buildable", revdep, fn, taskname)
@@ -1105,8 +1100,8 @@ class RunQueueExecuteTasks(RunQueueExecute):
             self.rq.state = runQueueCleanUp
 
     def task_skip(self, task):
-        self.runq_running[task] = 1
-        self.runq_buildable[task] = 1
+        self.runq_running.add(task)
+        self.runq_buildable.add(task)
         self.task_complete(task)
         self.stats.taskCompleted()
         self.stats.taskSkipped()
@@ -1131,8 +1126,8 @@ class RunQueueExecuteTasks(RunQueueExecute):
                     self.task_skip(task)
                     continue
                 elif self.cooker.configuration.dry_run:
-                    self.runq_running[task] = 1
-                    self.runq_buildable[task] = 1
+                    self.runq_running.add(task)
+                    self.runq_buildable.add(task)
                     self.notify_task_started(task)
                     self.stats.taskActive()
                     self.task_complete(task)
@@ -1144,7 +1139,7 @@ class RunQueueExecuteTasks(RunQueueExecute):
 
                 self.build_pids[pid] = task
                 self.build_pipes[pid] = runQueuePipe(pipein, pipeout, self.cfgData)
-                self.runq_running[task] = 1
+                self.runq_running.add(task)
                 self.stats.taskActive()
 
             for pipe in self.build_pipes:
@@ -1161,11 +1156,11 @@ class RunQueueExecuteTasks(RunQueueExecute):
 
             # Sanity Checks
             for task in xrange(self.stats.total):
-                if self.runq_buildable[task] == 0:
+                if task not in self.runq_buildable:
                     logger.error("Task %s never buildable!", task)
-                if self.runq_running[task] == 0:
+                if task not in self.runq_running:
                     logger.error("Task %s never ran!", task)
-                if self.runq_complete[task] == 0:
+                if task not in self.runq_complete:
                     logger.error("Task %s never completed!", task)
             self.rq.state = runQueueComplete
             return
