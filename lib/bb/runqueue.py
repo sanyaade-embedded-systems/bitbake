@@ -815,7 +815,6 @@ class RunQueue:
         return current
 
     def check_stamp_task(self, task, taskname = None):
-
         if self.stamppolicy == "perfile":
             fulldeptree = False
         else:
@@ -828,34 +827,34 @@ class RunQueue:
         if taskname is None:
             taskname = self.rqdata.runq_task[task]
         stampfile = "%s.%s" % (self.rqdata.dataCache.stamp[fn], taskname)
+
         # If the stamp is missing its not current
         if not os.access(stampfile, os.F_OK):
             logger.debug(2, "Stampfile %s not available\n", stampfile)
             return False
+
         # If its a 'nostamp' task, it's not current
         taskdep = self.rqdata.dataCache.task_deps[fn]
         if 'nostamp' in taskdep and taskname in taskdep['nostamp']:
             logger.debug(2, "%s.%s is nostamp\n", fn, taskname)
             return False
 
-        iscurrent = True
         t1 = os.stat(stampfile)[stat.ST_MTIME]
         for dep in self.rqdata.runq_depends[task]:
-            if iscurrent:
-                fn2 = self.rqdata.taskData.fn_index[self.rqdata.runq_fnid[dep]]
-                taskname2 = self.rqdata.runq_task[dep]
-                stampfile2 = "%s.%s" % (self.rqdata.dataCache.stamp[fn2], taskname2)
-                if fn == fn2 or (fulldeptree and fn2 not in stampwhitelist):
-                    try:
-                        t2 = os.stat(stampfile2)[stat.ST_MTIME]
-                        if t1 < t2:
-                            logger.debug(2, "Stampfile %s < %s", stampfile, stampfile2)
-                            iscurrent = False
-                    except:
-                        logger.debug(2, "Exception reading %s for %s", stampfile2, stampfile)
-                        iscurrent = False
-
-        return iscurrent
+            fn2 = self.rqdata.taskData.fn_index[self.rqdata.runq_fnid[dep]]
+            taskname2 = self.rqdata.runq_task[dep]
+            stampfile2 = "%s.%s" % (self.rqdata.dataCache.stamp[fn2], taskname2)
+            if fn == fn2 or (fulldeptree and fn2 not in stampwhitelist):
+                try:
+                    t2 = os.stat(stampfile2)[stat.ST_MTIME]
+                    if t1 < t2:
+                        logger.debug(2, "Stampfile %s < %s", stampfile, stampfile2)
+                        break
+                except OSError:
+                    logger.debug(2, "Exception reading %s for %s", stampfile2, stampfile)
+                    break
+        else:
+            return True
 
     def execute_runqueue(self):
         """
