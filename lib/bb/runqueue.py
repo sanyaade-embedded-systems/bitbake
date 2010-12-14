@@ -78,22 +78,17 @@ class RunQueueScheduler(object):
 
     def __init__(self, runqueue, rqdata):
         """
-        The default scheduler just returns the first buildable task (the
-        priority map is sorted by task numer)
+        The default scheduler just returns the first buildable task
         """
         self.rq = runqueue
         self.rqdata = rqdata
-        numTasks = len(self.rq.runq_fnid)
-
-        self.prio_map = []
-        self.prio_map.extend(range(numTasks))
+        self.tasks = xrange(len(self.rqdata.runq_fnid))
 
     def next_buildable_tasks(self):
         """
         Return the id of the first task we find that is buildable
         """
-        for tasknum in xrange(len(self.rqdata.runq_fnid)):
-            taskid = self.prio_map[tasknum]
+        for taskid in self.tasks:
             if taskid in self.rq.runq_running:
                 continue
             if taskid in self.rq.runq_buildable:
@@ -117,22 +112,13 @@ class RunQueueSchedulerSpeed(RunQueueScheduler):
         """
         The priority map is sorted by task weight.
         """
-        from copy import deepcopy
+        RunQueueScheduler.__init__(self, runqueue, rqdata)
 
-        self.rq = runqueue
-        self.rqdata = rqdata
+        self.tasks = sorted(self.tasks,
+                            key=lambda task: self.rqdata.runq_weight[task],
+                            reverse=True)
 
-        sortweight = sorted(deepcopy(self.rqdata.runq_weight))
-        copyweight = deepcopy(self.rqdata.runq_weight)
-        self.prio_map = []
-
-        for weight in sortweight:
-            idx = copyweight.index(weight)
-            self.prio_map.append(idx)
-            copyweight[idx] = -1
-
-        self.prio_map.reverse()
-
+import itertools
 class RunQueueSchedulerCompletion(RunQueueSchedulerSpeed):
     """
     A scheduler optimised to complete .bb files are quickly as possible. The
@@ -145,26 +131,23 @@ class RunQueueSchedulerCompletion(RunQueueSchedulerSpeed):
 
     def __init__(self, runqueue, rqdata):
         RunQueueSchedulerSpeed.__init__(self, runqueue, rqdata)
-        from copy import deepcopy
 
-        #FIXME - whilst this groups all fnids together it does not reorder the
-        #fnid groups optimally.
+        fnids = self.rqdata.runq_fnid
+        weights = self.rqdata.runq_weight
+        def weight(tasks):
+            return sum(weights[task] for task in tasks)
 
-        basemap = deepcopy(self.prio_map)
-        self.prio_map = []
-        while (len(basemap) > 0):
-            entry = basemap.pop(0)
-            self.prio_map.append(entry)
-            fnid = self.rqdata.runq_fnid[entry]
-            todel = []
-            for entry in basemap:
-                entry_fnid = self.rqdata.runq_fnid[entry]
-                if entry_fnid == fnid:
-                    todel.append(basemap.index(entry))
-                    self.prio_map.append(entry)
-            todel.reverse()
-            for idx in todel:
-                del basemap[idx]
+        # Sort tasks by:
+        # 1) total of task weights for the recipe
+        # 2) recipe
+        # 3) task weight
+        byfnid = itertools.groupby(self.tasks, lambda task: fnids[task])
+        fnweights = dict((fnid, weight(tasks)) for fnid, tasks in byfnid)
+
+        self.tasks = sorted(self.tasks, key=lambda task: fnids[task])
+        self.tasks = sorted(self.tasks,
+                            key=lambda task: fnweights[fnids[task]],
+                            reverse=True)
 
 class RunQueueData:
     """
