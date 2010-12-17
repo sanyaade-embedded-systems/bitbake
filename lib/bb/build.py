@@ -41,13 +41,6 @@ logger = logging.getLogger('BitBake.Build')
 NULL = open(os.devnull, 'r+')
 
 
-# When we execute a python function we'd like certain things
-# in all namespaces, hence we add them to __builtins__
-# If we do not do this and use the exec globals, they will
-# not be available to subfunctions.
-__builtins__['bb'] = bb
-__builtins__['os'] = os
-
 class FuncFailed(Exception):
     def __init__(self, name = None, logfile = None):
         self.logfile = logfile
