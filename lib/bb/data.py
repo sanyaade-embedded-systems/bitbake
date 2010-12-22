@@ -232,6 +232,14 @@ def emit_env(o=sys.__stdout__, d = init(), all=False):
         for key in keys:
             emit_var(key, o, d, all and not isfunc) and o.write('\n')
 
+def exported_vars(d):
+    keys = (key for key in d.keys() if d.getVarFlag(key, "export"))
+    for k in keys:
+        try:
+            yield key, d.getVar(key, True)
+        except Exception:
+            pass
+
 def emit_func(func, o=sys.__stdout__, d = init()):
     """Emits all items in the data store in a format such that it can be sourced by a shell."""
 
