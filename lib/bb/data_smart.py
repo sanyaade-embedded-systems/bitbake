@@ -84,6 +84,9 @@ class DataContext(dict):
         self['d'] = metadata
 
     def __missing__(self, key):
+        if key in bb.utils._context:
+            return bb.utils._context[key]
+
         value = self.metadata.getVar(key, True)
         if value is None or self.metadata.getVarFlag(key, 'func'):
             raise KeyError(key)
