@@ -35,6 +35,11 @@ import bb.process
 from contextlib import nested
 from bb import data, event, mkdirhier, utils
 
+try:
+    from cStringIO import StringIO
+except ImportError:
+    from StringIO import StringIO
+
 bblogger = logging.getLogger('BitBake')
 logger = logging.getLogger('BitBake.Build')
 
@@ -219,25 +224,28 @@ def exec_func_shell(function, d, runfile, logfile, cwd=None, fakeroot=False):
     # Don't let the emitted shell script override PWD
     d.delVarFlag('PWD', 'export')
 
-    with open(runfile, 'w') as script:
-        script.write('#!/bin/sh -e\n')
-        if logger.isEnabledFor(logging.DEBUG - 1):
-            script.write("set -x\n")
-        data.emit_func(function, script, d)
-
-        script.write("%s\n" % function)
-        os.fchmod(script.fileno(), 0775)
-
+    cmd = ['sh', '-e']
     if fakeroot:
-        cmd = ['fakeroot', runfile]
-    else:
-        cmd = runfile
+        cmd.insert(0, 'fakeroot')
 
     if logger.isEnabledFor(logging.DEBUG):
         logfile = LogTee(logger, logfile)
+        if logger.isEnabledFor(logging.DEBUG - 1):
+            cmd.append('-x')
+
+    script = StringIO()
+    data.emit_func(function, script, d)
+    script.write('%s\n' % function)
+
+    with open(runfile, 'w') as scriptfile:
+        scriptfile.write('#!/bin/sh -e\n')
+        for key in data.exported_keys(d):
+            data.emit_var(key, script, d)
+        scriptfile.write(script.getvalue())
+        os.fchmod(scriptfile.fileno(), 0775)
 
     try:
-        bb.process.run(cmd, cwd=cwd, shell=False, stdin=NULL, log=logfile)
+        bb.process.run(cmd, cwd=cwd, input=script.getvalue(), shell=False, log=logfile)
     except bb.process.CmdError:
         raise FuncFailed(function, logfile.name)
 

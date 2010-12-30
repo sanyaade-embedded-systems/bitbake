@@ -249,12 +249,6 @@ def exported_vars(d):
 
 def emit_func(func, o=sys.__stdout__, d = init()):
     """Emits all items in the data store in a format such that it can be sourced by a shell."""
-
-    keys = (key for key in d.keys() if not key.startswith("__") and not d.getVarFlag(key, "func"))
-    for key in keys:
-        emit_var(key, o, d, False) and o.write('\n')
-
-    emit_var(func, o, d, False) and o.write('\n')
     newdeps = bb.codeparser.ShellParser().parse_shell(d.getVar(func, True))
     seen = set()
     while newdeps:
@@ -266,6 +260,7 @@ def emit_func(func, o=sys.__stdout__, d = init()):
                emit_var(dep, o, d, False) and o.write('\n')
                newdeps |=  bb.codeparser.ShellParser().parse_shell(d.getVar(dep, True))
         newdeps -= seen
+    emit_var(func, o, d, False) and o.write('\n')
 
 def update_data(d):
     """Performs final steps upon the datastore, including application of overrides"""
