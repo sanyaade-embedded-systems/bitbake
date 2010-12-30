@@ -159,17 +159,6 @@ def expandKeys(alterdata, readdata = None):
         ekey = todolist[key]
         renameVar(key, ekey, alterdata)
 
-def inheritFromOS(d):
-    """Inherit variables from the environment."""
-    exportlist = bb.utils.preserved_envvars_exported()
-    for s in os.environ.keys():
-        try:
-            setVar(s, os.environ[s], d)
-            if s in exportlist:
-                setVarFlag(s, "export", True, d)
-        except TypeError:
-            pass
-
 def emit_var(var, o=sys.__stdout__, d = init(), all=False):
     """Emit a variable to be sourced by a shell."""
     if getVarFlag(var, "python", d):
@@ -232,9 +221,13 @@ def emit_env(o=sys.__stdout__, d = init(), all=False):
         for key in keys:
             emit_var(key, o, d, all and not isfunc) and o.write('\n')
 
+def exported_keys(d):
+    return (key for key in d.keys() if not key.startswith('__') and
+                                   d.getVarFlag(key, 'export') and
+                                   not d.getVarFlag(key, 'unexport'))
+
 def exported_vars(d):
-    keys = (key for key in d.keys() if d.getVarFlag(key, "export"))
-    for k in keys:
+    for key in exported_keys(d):
         try:
             yield key, d.getVar(key, True)
         except Exception:
@@ -290,11 +283,8 @@ def build_dependencies(key, keys, shelldeps, d):
         bb.note("Error expanding variable %s" % key)
         raise
     return deps
-    #bb.note("Variable %s references %s and calls %s" % (key, str(deps), str(execs)))
-    #d.setVarFlag(key, "vardeps", deps)
 
 def generate_dependencies(d):
-
     keys = set(key for key in d.keys() if not key.startswith("__"))
     shelldeps = set(key for key in keys if d.getVarFlag(key, "export") and not d.getVarFlag(key, "unexport"))
 
@@ -317,7 +307,6 @@ def generate_dependencies(d):
                 newdeps |=  deps[dep]
             newdeps -= seen
         taskdeps[task] = seen | newdeps
-        #print "For %s: %s" % (task, str(taskdeps[task]))
     return taskdeps, deps
 
 def inherits_class(klass, d):

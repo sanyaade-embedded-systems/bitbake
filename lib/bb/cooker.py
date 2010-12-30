@@ -71,8 +71,7 @@ class BBCooker:
         self.configuration = configuration
 
         self.configuration.data = bb.data.init()
-
-        bb.data.inheritFromOS(self.configuration.data)
+        self.configuration.data.update(os.environ)
 
         self.parseConfigurationFiles(self.configuration.file)
 
