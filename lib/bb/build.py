@@ -191,8 +191,6 @@ def exec_func_python(func, d, runfile, logfile, cwd=None):
     olddir = os.getcwd()
     code = _functionfmt.format(function=func, body=d.getVar(func, True))
     bb.utils.mkdirhier(os.path.dirname(runfile))
-    with open(runfile, 'w') as script:
-        script.write(code)
 
     if cwd:
         os.chdir(cwd)
@@ -205,13 +203,28 @@ def exec_func_python(func, d, runfile, logfile, cwd=None):
         comp = utils.better_compile(code, func, bbfile)
         utils.better_exec(comp, {"d": d}, code, bbfile)
     except:
+        with open(runfile, 'w') as script:
+            script.write(code)
+
         if sys.exc_info()[0] in (bb.parse.SkipPackage, bb.build.FuncFailed):
             raise
 
         raise FuncFailed(func, None)
+    else:
+        if logger.isEnabledFor(logging.DEBUG):
+            with open(runfile, 'w') as script:
+                script.write(code)
     finally:
         bblogger.removeHandler(handler)
         os.chdir(olddir)
+
+def write_runfile(runfile, script, d):
+    with open(runfile, 'w') as scriptfile:
+        scriptfile.write('#!/bin/sh -e\n')
+        for key in data.exported_keys(d):
+            data.emit_var(key, script, d)
+        scriptfile.write(script.getvalue())
+        os.fchmod(scriptfile.fileno(), 0775)
 
 def exec_func_shell(function, d, runfile, logfile, cwd=None, fakeroot=False):
     """Execute a shell function from the metadata
@@ -237,17 +250,14 @@ def exec_func_shell(function, d, runfile, logfile, cwd=None, fakeroot=False):
     data.emit_func(function, script, d)
     script.write('%s\n' % function)
 
-    with open(runfile, 'w') as scriptfile:
-        scriptfile.write('#!/bin/sh -e\n')
-        for key in data.exported_keys(d):
-            data.emit_var(key, script, d)
-        scriptfile.write(script.getvalue())
-        os.fchmod(scriptfile.fileno(), 0775)
-
     try:
         bb.process.run(cmd, cwd=cwd, input=script.getvalue(), shell=False, log=logfile)
     except bb.process.CmdError:
+        write_runfile(runfile, script, d)
         raise FuncFailed(function, logfile.name)
+    else:
+        if logger.isEnabledFor(logging.DEBUG):
+            write_runfile(runfile, script, d)
 
 def _task_data(fn, task, d):
     localdata = data.createCopy(d)
