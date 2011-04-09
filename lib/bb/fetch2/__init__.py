@@ -26,6 +26,7 @@ BitBake build tools.
 
 from __future__ import absolute_import
 from __future__ import print_function
+from itertools import izip
 import os, re
 import logging
 import bb.data, bb.persist_data, bb.utils
@@ -191,27 +192,32 @@ def encodeurl(decoded):
 
     return url
 
-def uri_replace(ud, uri_find, uri_replace, d):
-    if not ud.url or not uri_find or not uri_replace:
-        logger.debug(1, "uri_replace: passed an undefined value, not replacing")
-    uri_decoded = list(decodeurl(ud.url))
-    uri_find_decoded = list(decodeurl(uri_find))
-    uri_replace_decoded = list(decodeurl(uri_replace))
-    result_decoded = ['', '', '', '', '', {}]
-    for i in uri_find_decoded:
-        loc = uri_find_decoded.index(i)
-        result_decoded[loc] = uri_decoded[loc]
-        if isinstance(i, basestring):
-            if (re.match(i, uri_decoded[loc])):
-                result_decoded[loc] = re.sub(i, uri_replace_decoded[loc], uri_decoded[loc])
-                if uri_find_decoded.index(i) == 2:
-                    if ud.mirrortarball:
-                        result_decoded[loc] = os.path.join(os.path.dirname(result_decoded[loc]), os.path.basename(ud.mirrortarball))
-                    elif ud.localpath:
-                        result_decoded[loc] = os.path.join(os.path.dirname(result_decoded[loc]), os.path.basename(ud.localpath))
-            else:
-                return ud.url
-    return encodeurl(result_decoded)
+def uri_replace(urldata, uri_find, uri_replace, d):
+    if urldata.mirrortarball:
+        filename = os.path.basename(urldata.mirrortarball)
+    elif urldata.localpath:
+        filename = os.path.basename(urldata.localpath)
+    else:
+        filename = None
+
+    result = []
+    source = list(decodeurl(urldata.url))
+    params = source.pop()
+
+    elements = izip(source, decodeurl(uri_find), decodeurl(uri_replace))
+
+    for position, (component, find, replace) in enumerate(elements):
+        if re.match(find, component):
+            component = re.sub(find, replace, component)
+            if filename and position == 2: # path
+                component = os.path.join(os.path.dirname(component), filename)
+        else:
+            return urldata.url
+
+        result.append(component)
+
+    result.append(params)
+    return encodeurl(result)
 
 methods = []
 urldata_cache = {}
