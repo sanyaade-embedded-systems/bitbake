@@ -31,6 +31,7 @@ import os, re
 import logging
 import bb.data, bb.persist_data, bb.utils
 from bb import data
+from .url import decodeurl, encodeurl
 
 __version__ = "2"
 
@@ -125,72 +126,6 @@ class NetworkAccess(BBFetchException):
          BBFetchException.__init__(self, msg)
          self.args = (url, cmd)
 
-
-def decodeurl(url):
-    """Decodes an URL into the tokens (scheme, network location, path,
-    user, password, parameters).
-    """
-
-    m = re.compile('(?P<type>[^:]*)://((?P<user>.+)@)?(?P<location>[^;]+)(;(?P<parm>.*))?').match(url)
-    if not m:
-        raise MalformedUrl(url)
-
-    type = m.group('type')
-    location = m.group('location')
-    if not location:
-        raise MalformedUrl(url)
-    user = m.group('user')
-    parm = m.group('parm')
-
-    locidx = location.find('/')
-    if locidx != -1 and type.lower() != 'file':
-        host = location[:locidx]
-        path = location[locidx:]
-    else:
-        host = ""
-        path = location
-    if user:
-        m = re.compile('(?P<user>[^:]+)(:?(?P<pswd>.*))').match(user)
-        if m:
-            user = m.group('user')
-            pswd = m.group('pswd')
-    else:
-        user = ''
-        pswd = ''
-
-    p = {}
-    if parm:
-        for s in parm.split(';'):
-            s1, s2 = s.split('=')
-            p[s1] = s2
-
-    return (type, host, path, user, pswd, p)
-
-def encodeurl(decoded):
-    """Encodes a URL from tokens (scheme, network location, path,
-    user, password, parameters).
-    """
-
-    (type, host, path, user, pswd, p) = decoded
-
-    if not path:
-        raise MissingParameterError('path', "encoded from the data %s" % str(decoded))
-    if not type:
-        raise MissingParameterError('type', "encoded from the data %s" % str(decoded))
-    url = '%s://' % type
-    if user and type != "file":
-        url += "%s" % user
-        if pswd:
-            url += ":%s" % pswd
-        url += "@"
-    if host and type != "file":
-        url += "%s" % host
-    url += "%s" % path
-    if p:
-        for parm in p:
-            url += ";%s=%s" % (parm, p[parm])
-
-    return url
 
 def uri_replace(urldata, uri_find, uri_replace, d):
     if urldata.mirrortarball:
